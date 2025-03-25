@@ -6,6 +6,12 @@ export default function Home() {
         <h1 className="text-2xl font-bold text-center text-zinc-900 dark:text-zinc-50">
           Screen Logger
         </h1>
+        <Link
+          className="text-zinc-500 dark:text-zinc-400 underline font-bold"
+          href="https://github.com/josh-tt/tt-screen-logger.git"
+        >
+          Github
+        </Link>
 
         <p className="my-4 text-sm text-zinc-500 dark:text-zinc-50">
           Forked and inspired by{" "}
@@ -13,6 +19,7 @@ export default function Home() {
             screenlog.js
           </Link>
         </p>
+
         <p className="text-base max-w-xl mx-auto mb-12">
           Screen Logger is a tool that allows you to log messages to the console
           in a floating window. Why? Because its handy sometimes as the dev

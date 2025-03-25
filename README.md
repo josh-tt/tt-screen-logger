@@ -2,7 +2,8 @@
 
 A customizable React component that displays console logs directly on the screen, perfect for development and debugging. This component provides a floating window that can be positioned anywhere on the screen and includes features like throttling, pausing, and searching logs.
 
-Forked/Inspired by https://github.com/chinchang/screenlog.js
+Repository <https://github.com/josh-tt/tt-screen-logger.git>
+Forked/Inspired by <https://github.com/chinchang/screenlog.js>
 
 ## Features
 
@@ -18,9 +19,10 @@ Forked/Inspired by https://github.com/chinchang/screenlog.js
 
 ## Requirements
 
-- React 18+ and TypeScript 5.0+
-- Tailwind CSS 3.0+ (optional, can be removed with minimal changes)
-- Works with any modern React framework (Next.js, Remix, Vite, etc.)
+- React 19+ and TypeScript 5.0+
+- Tailwind CSS 4.0+ (optional, can be refactored with minimal changes)
+- NextJS (demo purposes only)
+- Should work with any modern React framework (Next.js, Remix, Vite, etc.)
 
 ## Installation
 
