@@ -21,9 +21,9 @@ export default function Home() {
         </p>
 
         <p className="text-base max-w-xl mx-auto mb-12">
-          Screen Logger is a tool that allows you to log messages to the console
-          in a floating window. Why? Because its handy sometimes as the dev
-          tools can get in the way.
+          Screen Logger is a React component that allows you to log messages to
+          the console in a floating window. Why? Because its handy sometimes as
+          the dev tools can get in the way.
         </p>
         <p className="text-xs max-w-xl mx-auto mb-8">
           This page will refresh every minute to prevent memory issues in
