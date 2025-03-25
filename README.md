@@ -2,6 +2,8 @@
 
 A customizable React component that displays console logs directly on the screen, perfect for development and debugging. This component provides a floating window that can be positioned anywhere on the screen and includes features like throttling, pausing, and searching logs.
 
+Forked/Inspired by https://github.com/chinchang/screenlog.js
+
 ## Features
 
 - 🖥️ Floating console window with customizable position and size
