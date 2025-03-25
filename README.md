@@ -104,13 +104,13 @@ import { ScreenLogger } from 'dev-screen-logger';
 
 function App() {
   return (
-    <div>
+    <body>
       <ScreenLogger
         color="#ffffff"
         bgColor="rgba(0, 0, 0, 0.8)"
         position="bottom"
-        width="60%"
-        height="40vh"
+        width="50%%"
+        height="100vh"
         buttonPosition="bottom-right"
         opacity={0.9}
         shortcutKey="k"
@@ -120,12 +120,7 @@ function App() {
         initialPosition="bottom"
         listenToKeystrokes={true}
       />
-      
-      {/* Your app content */}
-      <button onClick={() => console.log('Test log message')}>
-        Log Something
-      </button>
-    </div>
+    </body>
   );
 }
 ```
