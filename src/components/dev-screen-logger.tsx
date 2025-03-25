@@ -1356,11 +1356,14 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
           placeholder={
             searchQuery ? "🔍 Searching (paused)" : "Search logs... (Ctrl+F)"
           }
-          className="rounded px-2 py-1 text-xs bg-zinc-800 text-white border border-zinc-700 focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600 placeholder-zinc-400"
-          style={{
-            width: "200px",
-            backgroundColor: searchQuery ? "rgba(255, 213, 79, 0.2)" : "",
-          }}
+          data-searching={searchQuery.length > 0}
+          className="w-[200px] rounded px-2 py-1 text-xs 
+            bg-zinc-800 text-zinc-100
+            border border-zinc-700 
+            placeholder:text-zinc-400
+            focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600
+            data-[searching=true]:bg-zinc-800/90
+            data-[searching=true]:placeholder:text-zinc-300"
         />
       )}
     </div>
