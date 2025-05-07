@@ -1,6 +1,10 @@
 "use client"; // for use with next.js only
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { Prism as SyntaxHighlighter } from "react-syntax-highlighter";
+import { dracula } from "react-syntax-highlighter/dist/esm/styles/prism";
+import { replayLogsToScreenLogger } from "../../utils/early-logs";
 
 interface ScreenLoggerProps {
   color?: string;
@@ -88,7 +92,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
   const [loggerPosition, setLoggerPosition] = useState<LoggerPosition>(
     initialPosition as LoggerPosition
   );
-  const [loggerWidth, setLoggerWidth] = useState<string>("50%"); // Track width separately
+  const [loggerWidth, setLoggerWidth] = useState<string>(width); // Use the width prop
 
   // --- THROTTLING STATE ---
   // Combined throttle config stored in a ref to avoid stale closures.
@@ -112,7 +116,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
     if (!contentEl) return;
 
     // Get all log entries in the content container
-    Array.from(contentEl.children).forEach((el) => {
+    Array.from(contentEl.children).forEach(el => {
       // Skip the throttle indicator if it's somehow in the content
       if (el.id === "screenlog-throttle-indicator") return;
 
@@ -121,9 +125,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
       if (searchQuery === "") {
         // If search is empty, show all logs
         logEntry.style.display = "";
-      } else if (
-        el.textContent?.toLowerCase().includes(searchQuery.toLowerCase())
-      ) {
+      } else if (el.textContent?.toLowerCase().includes(searchQuery.toLowerCase())) {
         // Show logs that match the search
         logEntry.style.display = "";
       } else {
@@ -155,9 +157,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
   // --- UPDATE THROTTLING INDICATOR ---
   const updateThrottlingIndicator = useCallback(() => {
     if (!logElementRef.current) return;
-    const existingIndicator = document.getElementById(
-      "screenlog-throttle-indicator"
-    );
+    const existingIndicator = document.getElementById("screenlog-throttle-indicator");
     if (existingIndicator) {
       existingIndicator.remove();
     }
@@ -231,16 +231,11 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
         }
       } else if (wasPreviouslySearching && !isNowSearching) {
         // Ending a search - resume if we auto-paused
-        if (
-          throttleConfigRef.current.paused &&
-          throttleConfigRef.current._previousState
-        ) {
+        if (throttleConfigRef.current.paused && throttleConfigRef.current._previousState) {
           // Restore previous throttle state
           throttleConfigRef.current.paused = false;
-          throttleConfigRef.current.throttled =
-            throttleConfigRef.current._previousState.throttled;
-          throttleConfigRef.current.delay =
-            throttleConfigRef.current._previousState.delay;
+          throttleConfigRef.current.throttled = throttleConfigRef.current._previousState.throttled;
+          throttleConfigRef.current.delay = throttleConfigRef.current._previousState.delay;
 
           // Clean up
           delete throttleConfigRef.current._previousState;
@@ -266,9 +261,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
       clearInterval(testSignalIntervalRef.current);
       testSignalIntervalRef.current = null;
     }
-    const currentDelay = throttleConfigRef.current.throttled
-      ? throttleConfigRef.current.delay
-      : 10;
+    const currentDelay = throttleConfigRef.current.throttled ? throttleConfigRef.current.delay : 10;
     testSignalIntervalRef.current = setInterval(() => {
       testSignalCountRef.current++;
       if (window.screenLog) {
@@ -302,7 +295,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
               window.screenLog.log("Logs copied to clipboard");
             }
           })
-          .catch((err) => {
+          .catch(err => {
             if (window.screenLog) {
               window.screenLog.log("Failed to copy logs", err);
             }
@@ -394,38 +387,15 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
 
   // --- RESPONSIVE WIDTH & POSITIONING ---
   const getResponsiveWidth = useCallback((position: LoggerPosition): string => {
-    const screenWidth = window.innerWidth;
-    if (screenWidth <= 640) {
-      if (position === "left" || position === "right") return "50%";
-      if (position === "top" || position === "bottom") return "90%";
-      if (position.includes("top-") || position.includes("bottom-"))
-        return "50%";
-      if (position === "center") return "90%";
-    } else if (screenWidth <= 1024) {
-      if (position === "left" || position === "right") return "30%";
-      if (position === "top" || position === "bottom") return "70%";
-      if (position.includes("top-") || position.includes("bottom-"))
-        return "30%";
-      if (position === "center") return "70%";
-    }
-    if (position === "left" || position === "right") return "20%";
-    if (position === "top" || position === "bottom") return "50%";
-    if (position.includes("top-") || position.includes("bottom-")) return "20%";
-    if (position === "center") return "60%";
-    return "50%";
+    // For full width, return 100% regardless of position
+    return "100%";
   }, []);
 
   const resizeLogger = useCallback(
     (direction: "increase" | "decrease") => {
       return;
     },
-    [
-      loggerPosition,
-      loggerWidth,
-      color,
-      isLoggingThrottled,
-      updateThrottlingIndicator,
-    ]
+    [loggerPosition, loggerWidth, color, isLoggingThrottled, updateThrottlingIndicator]
   );
 
   const handleKeyboardResize = useCallback(
@@ -443,10 +413,12 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
     if (position === "top" || position === "bottom") {
       logElementRef.current.style.left = `calc((100% - ${newWidth}) / 2)`;
       logElementRef.current.style.right = `calc((100% - ${newWidth}) / 2)`;
+      logElementRef.current.style.width = newWidth;
     } else if (position === "center") {
       const offset = (100 - parseInt(newWidth)) / 2;
       logElementRef.current.style.left = `${offset}%`;
       logElementRef.current.style.right = `${offset}%`;
+      logElementRef.current.style.width = newWidth;
     } else {
       logElementRef.current.style.width = newWidth;
     }
@@ -612,9 +584,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
       }
 
       // Ensure content area gets proper height
-      const contentEl = element.querySelector(
-        "#screenlog-content"
-      ) as HTMLElement;
+      const contentEl = element.querySelector("#screenlog-content") as HTMLElement;
       if (contentEl) {
         contentEl.style.height = "calc(100% - 50px)";
         contentEl.style.overflowY = "scroll";
@@ -634,23 +604,23 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
       return;
     }
     const existingLoggers = document.getElementsByClassName("screenlog");
-    Array.from(existingLoggers).forEach((el) => {
+    Array.from(existingLoggers).forEach(el => {
       if (el.parentNode) el.parentNode.removeChild(el);
     });
 
     const _console: Record<string, any> = {};
     const _options = {
       bgColor: bgColor,
-      logColor: color,
-      infoColor: "#63B3ED", // Blue - match Leva version
-      warnColor: "#F6AD55", // Orange - match Leva version
-      errorColor: "#FC8181", // Red - match Leva version
+      logColor: "#d4d4d4", // Light gray for normal logs
+      infoColor: "#4dabf7", // Blue for info
+      warnColor: "#ffa94d", // Orange for warnings
+      errorColor: "#ff6b6b", // Red for errors
       fontSize: fontSize,
       freeConsole: false,
       css: "",
       autoScroll: true,
       position: position,
-      width: width,
+      width: loggerWidth, // Use the loggerWidth state
       height: height,
       opacity: opacity,
     };
@@ -821,30 +791,28 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
               color === _options.errorColor
                 ? "error"
                 : color === _options.warnColor
-                ? "warn"
-                : color === _options.infoColor
-                ? "info"
-                : "log";
+                  ? "warn"
+                  : color === _options.infoColor
+                    ? "info"
+                    : "log";
 
             const borderColor =
               logType === "error"
                 ? "#FC8181"
                 : logType === "warn"
-                ? "#F6AD55"
-                : logType === "info"
-                ? "#63B3ED"
-                : "#A0AEC0";
+                  ? "#F6AD55"
+                  : logType === "info"
+                    ? "#63B3ED"
+                    : "#A0AEC0";
 
             const el = createElement(
               "div",
-              "line-height:1.7em;min-height:1.7em;white-space:pre-wrap;" +
+              "line-height:1.4em;min-height:1.4em;white-space:pre-wrap;font-family:monospace;" +
                 "background:" +
-                (contentEl.children.length % 2
-                  ? "rgba(0,0,0,0.2)"
-                  : "transparent") +
+                (contentEl.children.length % 2 ? "rgba(0,0,0,0.2)" : "transparent") +
                 ";color:" +
                 color +
-                ";padding:4px 8px;margin:4px 0;border-radius:3px;" +
+                ";padding:2px 8px;margin:2px 0;border-radius:3px;" +
                 "border-left:3px solid " +
                 borderColor +
                 ";"
@@ -854,9 +822,11 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
             const header = document.createElement("div");
             header.style.display = "flex";
             header.style.justifyContent = "space-between";
+            header.style.fontSize = "0.8em";
+            header.style.marginBottom = "2px";
+            header.style.color = "#6b7280"; // Gray color for timestamp
 
             const timestamp = document.createElement("span");
-            timestamp.style.fontSize = "0.8em";
             timestamp.style.opacity = "0.7";
             timestamp.textContent = new Date().toLocaleTimeString();
             header.appendChild(timestamp);
@@ -865,36 +835,54 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
 
             // Create content container
             const content = document.createElement("div");
+            content.style.fontFamily = "monospace";
+            content.style.fontSize = "0.8em";
 
             // Process each argument with improved object display
-            args.forEach((arg) => {
+            args.forEach((arg, index) => {
               if (typeof arg === "object" && arg !== null) {
                 const details = document.createElement("details");
-                details.style.marginTop = "5px";
+                details.style.marginTop = "2px";
+                details.style.marginBottom = "2px";
 
                 const summary = document.createElement("summary");
                 summary.style.cursor = "pointer";
-                summary.textContent = "Object data";
+                summary.style.fontWeight = "bold";
+                summary.style.color = "#4dabf7";
+                summary.style.fontSize = "0.9em";
+                summary.textContent = "Object";
                 details.appendChild(summary);
 
-                const pre = document.createElement("pre");
-                pre.style.background = "rgba(0,0,0,0.3)";
-                pre.style.padding = "5px";
-                pre.style.borderRadius = "3px";
-                pre.style.fontSize = "0.9em";
-                pre.style.overflow = "auto";
-                pre.style.maxHeight = "200px";
+                // Create a container for React to render into
+                const reactContainer = document.createElement("div");
+                details.appendChild(reactContainer);
 
-                try {
-                  pre.textContent = JSON.stringify(arg, null, 2);
-                } catch (e) {
-                  pre.textContent = "[Circular]";
-                }
+                // Use ReactDOM to render the SyntaxHighlighter into the container
+                const root = createRoot(reactContainer);
+                root.render(
+                  <SyntaxHighlighter
+                    language="json"
+                    style={dracula}
+                    customStyle={{
+                      background: "none",
+                      fontSize: "0.85em",
+                      margin: 0,
+                      padding: 0,
+                      color: "#d4d4d4",
+                      lineHeight: "1.4em",
+                    }}
+                  >
+                    {JSON.stringify(arg, null, 2)}
+                  </SyntaxHighlighter>
+                );
 
-                details.appendChild(pre);
                 content.appendChild(details);
               } else {
-                content.appendChild(document.createTextNode(String(arg) + " "));
+                const textNode = document.createTextNode(String(arg));
+                content.appendChild(textNode);
+                if (index < args.length - 1) {
+                  content.appendChild(document.createTextNode(" "));
+                }
               }
             });
 
@@ -922,30 +910,28 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
           color === _options.errorColor
             ? "error"
             : color === _options.warnColor
-            ? "warn"
-            : color === _options.infoColor
-            ? "info"
-            : "log";
+              ? "warn"
+              : color === _options.infoColor
+                ? "info"
+                : "log";
 
         const borderColor =
           logType === "error"
             ? "#FC8181"
             : logType === "warn"
-            ? "#F6AD55"
-            : logType === "info"
-            ? "#63B3ED"
-            : "#A0AEC0";
+              ? "#F6AD55"
+              : logType === "info"
+                ? "#63B3ED"
+                : "#A0AEC0";
 
         const el = createElement(
           "div",
-          "line-height:1.7em;min-height:1.7em;white-space:pre-wrap;" +
+          "line-height:1.4em;min-height:1.4em;white-space:pre-wrap;font-family:monospace;" +
             "background:" +
-            (contentEl.children.length % 2
-              ? "rgba(0,0,0,0.2)"
-              : "transparent") +
+            (contentEl.children.length % 2 ? "rgba(0,0,0,0.2)" : "transparent") +
             ";color:" +
             color +
-            ";padding:4px 8px;margin:4px 0;border-radius:3px;" +
+            ";padding:2px 8px;margin:2px 0;border-radius:3px;" +
             "border-left:3px solid " +
             borderColor +
             ";"
@@ -955,9 +941,11 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
         const header = document.createElement("div");
         header.style.display = "flex";
         header.style.justifyContent = "space-between";
+        header.style.fontSize = "0.8em";
+        header.style.marginBottom = "2px";
+        header.style.color = "#6b7280"; // Gray color for timestamp
 
         const timestamp = document.createElement("span");
-        timestamp.style.fontSize = "0.8em";
         timestamp.style.opacity = "0.7";
         timestamp.textContent = new Date().toLocaleTimeString();
         header.appendChild(timestamp);
@@ -966,36 +954,54 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
 
         // Create content container
         const content = document.createElement("div");
+        content.style.fontFamily = "monospace";
+        content.style.fontSize = "0.8em";
 
         // Process each argument with improved object display
-        args.forEach((arg) => {
+        args.forEach((arg, index) => {
           if (typeof arg === "object" && arg !== null) {
             const details = document.createElement("details");
-            details.style.marginTop = "5px";
+            details.style.marginTop = "2px";
+            details.style.marginBottom = "2px";
 
             const summary = document.createElement("summary");
             summary.style.cursor = "pointer";
-            summary.textContent = "Object data";
+            summary.style.fontWeight = "bold";
+            summary.style.color = "#4dabf7";
+            summary.style.fontSize = "0.9em";
+            summary.textContent = "Object";
             details.appendChild(summary);
 
-            const pre = document.createElement("pre");
-            pre.style.background = "rgba(0,0,0,0.3)";
-            pre.style.padding = "5px";
-            pre.style.borderRadius = "3px";
-            pre.style.fontSize = "0.9em";
-            pre.style.overflow = "auto";
-            pre.style.maxHeight = "200px";
+            // Create a container for React to render into
+            const reactContainer = document.createElement("div");
+            details.appendChild(reactContainer);
 
-            try {
-              pre.textContent = JSON.stringify(arg, null, 2);
-            } catch (e) {
-              pre.textContent = "[Circular]";
-            }
+            // Use ReactDOM to render the SyntaxHighlighter into the container
+            const root = createRoot(reactContainer);
+            root.render(
+              <SyntaxHighlighter
+                language="json"
+                style={dracula}
+                customStyle={{
+                  background: "none",
+                  fontSize: "0.85em",
+                  margin: 0,
+                  padding: 0,
+                  color: "#d4d4d4",
+                  lineHeight: "1.4em",
+                }}
+              >
+                {JSON.stringify(arg, null, 2)}
+              </SyntaxHighlighter>
+            );
 
-            details.appendChild(pre);
             content.appendChild(details);
           } else {
-            content.appendChild(document.createTextNode(String(arg) + " "));
+            const textNode = document.createTextNode(String(arg));
+            content.appendChild(textNode);
+            if (index < args.length - 1) {
+              content.appendChild(document.createTextNode(" "));
+            }
           }
         });
 
@@ -1034,7 +1040,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
       console.warn = _console.warn;
       console.error = _console.error;
       const screenlogElements = document.getElementsByClassName("screenlog");
-      Array.from(screenlogElements).forEach((el) => {
+      Array.from(screenlogElements).forEach(el => {
         if (el.parentNode) el.parentNode.removeChild(el);
       });
       isInitializedRef.current = false;
@@ -1062,12 +1068,11 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
 
     isInitializedRef.current = true;
     log(`Screen logger initialized.`);
-    if (
-      throttleConfigRef.current.throttled ||
-      throttleConfigRef.current.paused
-    ) {
+    if (throttleConfigRef.current.throttled || throttleConfigRef.current.paused) {
       updateThrottlingIndicator();
     }
+    // Replay early logs after initialization
+    replayLogsToScreenLogger();
     if (enableTesting && initiallyVisible) {
       startContinuousTestSignals();
     }
@@ -1134,8 +1139,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
           if (
             !logElementRef.current.children.length ||
             (logElementRef.current.children.length === 1 &&
-              logElementRef.current.children[0].textContent ===
-                "Screen logger initialized.")
+              logElementRef.current.children[0].textContent === "Screen logger initialized.")
           ) {
             startContinuousTestSignals();
           }
@@ -1298,7 +1302,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
     >
       <button
         onClick={() => toggleVisibility(!isVisible)}
-        className="rounded px-2 py-1 text-xs cursor-pointer shadow-md hover:bg-zinc-700 transition-colors bg-zinc-800 text-white whitespace-nowrap"
+        className="cursor-pointer rounded bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-white shadow-md transition-colors hover:bg-zinc-700"
       >
         {isVisible ? "Hide" : "Show"} Logs
       </button>
@@ -1306,7 +1310,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
         <>
           <button
             onClick={toggleThrottling}
-            className="rounded px-2 py-1 text-xs cursor-pointer shadow-md hover:bg-zinc-700 transition-colors bg-zinc-800 text-white whitespace-nowrap"
+            className="cursor-pointer rounded bg-zinc-800 px-2 py-1 text-xs whitespace-nowrap text-white shadow-md transition-colors hover:bg-zinc-700"
           >
             {getThrottleButtonText()}
           </button>
@@ -1320,7 +1324,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
               setIsLoggingPaused(!isLoggingPaused);
               updateThrottlingIndicator();
             }}
-            className="rounded px-2 py-1 text-xs cursor-pointer shadow-md hover:bg-zinc-700 transition-colors bg-zinc-800 text-white"
+            className="cursor-pointer rounded bg-zinc-800 px-2 py-1 text-xs text-white shadow-md transition-colors hover:bg-zinc-700"
           >
             {isLoggingPaused ? "Resume" : "Pause"}
           </button>
@@ -1328,7 +1332,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
             onClick={() => {
               copyLogs();
             }}
-            className="rounded px-2 py-1 text-xs cursor-pointer shadow-md hover:bg-zinc-700 transition-colors bg-zinc-800 text-white"
+            className="cursor-pointer rounded bg-zinc-800 px-2 py-1 text-xs text-white shadow-md transition-colors hover:bg-zinc-700"
           >
             Copy
           </button>
@@ -1338,7 +1342,7 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
                 window.screenLog.clear();
               }
             }}
-            className="rounded px-2 py-1 text-xs cursor-pointer shadow-md hover:bg-zinc-700 transition-colors bg-zinc-800 text-white"
+            className="cursor-pointer rounded bg-zinc-800 px-2 py-1 text-xs text-white shadow-md transition-colors hover:bg-zinc-700"
           >
             Clear
           </button>
@@ -1349,21 +1353,13 @@ export function ScreenLogger(props: ScreenLoggerProps = {}) {
           ref={searchInputRef}
           type="text"
           value={searchQuery}
-          onChange={(e) => {
+          onChange={e => {
             handleSearchChange(e.target.value);
           }}
           onKeyUp={filterLogs}
-          placeholder={
-            searchQuery ? "🔍 Searching (paused)" : "Search logs... (Ctrl+F)"
-          }
+          placeholder={searchQuery ? "🔍 Searching (paused)" : "Search logs... (Ctrl+F)"}
           data-searching={searchQuery.length > 0}
-          className="w-[200px] rounded px-2 py-1 text-xs 
-            bg-zinc-800 text-zinc-100
-            border border-zinc-700 
-            placeholder:text-zinc-400
-            focus:border-zinc-600 focus:outline-none focus:ring-1 focus:ring-zinc-600
-            data-[searching=true]:bg-zinc-800/90
-            data-[searching=true]:placeholder:text-zinc-300"
+          className="w-[200px] rounded border border-zinc-700 bg-zinc-800 px-2 py-1 text-xs text-zinc-100 placeholder:text-zinc-400 focus:border-zinc-600 focus:ring-1 focus:ring-zinc-600 focus:outline-none data-[searching=true]:bg-zinc-800/90 data-[searching=true]:placeholder:text-zinc-300"
         />
       )}
     </div>
