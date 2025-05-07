@@ -68,31 +68,38 @@ if (typeof window !== 'undefined') {
 }
 
 // Function to replay logs to the screen logger
-export function replayLogsToScreenLogger(maxEntries = 100) {
+export function replayLogsToScreenLogger(maxEntries = 200) {
   if (!window.screenLog || earlyLogs.length === 0) return;
 
-  // Add a separator
-  window.screenLog.log("---------- EARLY LOGS ----------");
+  // Add a separator (not captured in earlyLogs, and not timestamped)
+  if (window.screenLog && typeof window.screenLog.log === 'function') {
+    window.screenLog.log("---------- EARLY LOGS ----------");
+  }
 
   // Process logs for display - limit to maxEntries, taking the most recent logs
-  const logsToReplay = earlyLogs.slice(-maxEntries);
+  const logsToReplay = earlyLogs.slice(-maxEntries).filter(log => {
+    // Filter out any separator lines before replaying
+    return !(
+      typeof log.args[0] === "string" &&
+      (log.args[0].includes("EARLY LOGS") || log.args[0].includes("END EARLY LOGS"))
+    );
+  });
 
-  // Re-log each entry
+  // Re-log each entry (do not log the separator as a log entry)
   for (const log of logsToReplay) {
-    const date = new Date(log.timestamp);
-    const timeString = date.toLocaleTimeString();
-
-    // Pass the original args directly to preserve objects
     if (log.type === 'warn') {
-      window.screenLog.warn(`[${timeString}]`, ...log.args);
+      window.screenLog.warn(...log.args);
     } else if (log.type === 'error') {
-      window.screenLog.error(`[${timeString}]`, ...log.args);
+      window.screenLog.error(...log.args);
     } else if (log.type === 'info') {
-      window.screenLog.info(`[${timeString}]`, ...log.args);
+      window.screenLog.info(...log.args);
     } else {
-      window.screenLog.log(`[${timeString}]`, ...log.args);
+      window.screenLog.log(...log.args);
     }
   }
 
-  window.screenLog.log("---------- END EARLY LOGS ----------");
+  // Add end separator (not timestamped)
+  if (window.screenLog && typeof window.screenLog.log === 'function') {
+    window.screenLog.log("---------- END EARLY LOGS ----------");
+  }
 } 
