@@ -26,11 +26,7 @@ Forked/Inspired by <https://github.com/chinchang/screenlog.js>
 
 ## Installation
 
-```bash
-npm install dev-screen-logger
-# or
-yarn add dev-screen-logger
-```
+See below (no package)
 
 ## Usage
 
