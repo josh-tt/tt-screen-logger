@@ -1,0 +1,1571 @@
+// src/components/ScreenLogger.tsx
+"use client";
+// WIP - This is a work in progress. Needs testing and design, but works pretty well and has many improvements over the original.
+import { Hook, Console as ReactConsole, Unhook } from "console-feed";
+import React, { CSSProperties, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import Highlighter from "react-highlight-words";
+import { replayLogsToScreenLogger } from "../../utils/early-logs";
+
+// Define console message method types based on console-feed
+type Methods =
+  | "log"
+  | "debug"
+  | "info"
+  | "warn"
+  | "error"
+  | "table"
+  | "clear"
+  | "time"
+  | "timeEnd"
+  | "count"
+  | "assert";
+
+// Define the console log interface since console-feed doesn't export it
+interface ConsoleLog {
+  id?: string;
+  method: string;
+  data: any[];
+  [key: string]: any;
+}
+
+// Define a type for the Message expected by console-feed
+interface ConsoleMessage {
+  id: string;
+  method: Methods;
+  data: any[];
+  [key: string]: any;
+}
+
+interface ScreenLoggerProps {
+  fontSize?: string;
+  bgColor?: string;
+  position?: LoggerPosition; // initial only, controlled via keyboard/buttons
+  width?: string;
+  height?: string;
+  buttonPosition?: ButtonPosition;
+  opacity?: number;
+  shortcutKey?: string;
+  showButton?: boolean;
+  initiallyVisible?: boolean;
+  enableTesting?: boolean; // unused here, left for API compatibility
+  listenToKeystrokes?: boolean;
+  variant?: "light" | "dark"; // theme for console output
+  highlightWords?: string[]; // Words to always highlight
+  highlightBracketedWords?: boolean; // Highlight words inside brackets
+  skipEarlyLogs?: boolean; // Skip replaying early logs when component mounts
+  styles?: {
+    LOG_COLOR?: string;
+    LOG_BACKGROUND?: string;
+    LOG_BORDER?: string;
+    LOG_FONT_SIZE?: string;
+    LOG_FONT_FAMILY?: string;
+    LOG_ERROR_COLOR?: string;
+    LOG_WARN_COLOR?: string;
+    LOG_INFO_COLOR?: string;
+    LOG_DEBUG_COLOR?: string;
+    LOG_COMMAND_COLOR?: string;
+    OBJECT_VALUE_STRING_COLOR?: string;
+    OBJECT_VALUE_NUMBER_COLOR?: string;
+    OBJECT_VALUE_BOOLEAN_COLOR?: string;
+    OBJECT_VALUE_FUNCTION_KEYWORD_COLOR?: string;
+    OBJECT_VALUE_NULL_COLOR?: string;
+    // Add more style overrides as needed
+  };
+}
+
+type LoggerPosition =
+  | "top"
+  | "bottom"
+  | "left"
+  | "right"
+  | "center"
+  | "top-left"
+  | "top-right"
+  | "bottom-left"
+  | "bottom-right";
+
+type ButtonPosition = "top-left" | "top-right" | "bottom-left" | "bottom-right";
+
+// Custom styled console component that adds timestamp and dividers
+const StyledConsole = React.memo(
+  ({
+    logs,
+    variant,
+    styles,
+    searchQuery,
+    highlightWords = [],
+    highlightBracketedWords = false,
+    fontSize = "14px",
+    timestampsRef,
+  }: {
+    logs: ConsoleLog[];
+    variant: "light" | "dark";
+    styles: any;
+    searchQuery: string;
+    highlightWords?: string[];
+    highlightBracketedWords?: boolean;
+    fontSize?: string;
+    timestampsRef: React.RefObject<Record<string, string>>;
+  }) => {
+    const consoleRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+      if (consoleRef.current) {
+        consoleRef.current.scrollTop = consoleRef.current.scrollHeight;
+      }
+    }, [logs]);
+
+    // Add a style tag with CSS to override console elements
+    useEffect(() => {
+      const styleEl = document.createElement("style");
+      styleEl.innerHTML = `
+      /* Force transparent backgrounds on all console elements */
+      .console-transparent-bg *,
+      .console-transparent-bg div[class^="css-"],
+      .console-transparent-bg span[class^="css-"] {
+        background-color: transparent !important;
+        font-family: var(--font-sans) !important;
+      }
+      
+      /* Override console-feed specific styling to respect font size */
+      [class^="css-"] *,
+      .console-transparent-bg [class^="css-"] * {
+        font-size: inherit !important;
+        font-family: var(--font-sans) !important;
+      }
+      
+      /* Target the specific class mentioned in the issue */
+      .css-erk8xz, .css-erk8xz *,
+      .console-transparent-bg .css-erk8xz,
+      .console-transparent-bg .css-erk8xz * {
+        font-size: inherit !important;
+        font-family: var(--font-sans) !important;
+        box-sizing: border-box;
+      }
+      
+      /* Super specific override for inline styles */
+      .console-feed-item *,
+      .syntax-highlight-container,
+      .syntax-highlight-container *,
+      .syntax-highlight-container pre,
+      .search-highlight {
+        font-size: ${fontSize} !important;
+      }
+      
+      /* Console text colors */
+      .dark-mode .console-transparent-bg {
+        color: var(--color-zinc-50);
+      }
+      
+      .light-mode .console-transparent-bg {
+        color: var(--color-zinc-950);
+      }
+      
+      /* Type indicator borders */
+      .type-border-log {
+        border-left: 3px solid var(--color-zinc-500);
+      }
+      
+      .type-border-info {
+        border-left: 3px solid var(--color-cyan-500);
+      }
+      
+      .type-border-warn {
+        border-left: 3px solid var(--color-orange-500);
+      }
+      
+      .type-border-error {
+        border-left: 3px solid var(--color-red-500);
+      }
+      
+      /* Type indicators */
+      .log-indicator-log {
+        background-color: var(--color-zinc-500);
+      }
+      
+      .log-indicator-info {
+        background-color: var(--color-cyan-500);
+      }
+      
+      .log-indicator-warn {
+        background-color: var(--color-orange-500);
+      }
+      
+      .log-indicator-error {
+        background-color: var(--color-red-500);
+      }
+      
+      /* Fix for specific element that might have background */
+      .console-transparent-bg * {
+        background-color: transparent !important;
+      }
+      
+      /* Improve message alignment */
+      .console-transparent-bg div[class^="css-"] {
+        padding-left: 0 !important;
+        margin-left: 0 !important;
+        text-wrap: auto;
+      }
+      
+      /* Message container */
+      .message-container {
+        display: flex;
+        align-items: baseline;
+        flex-wrap: nowrap;
+      }
+      
+      /* Message content */
+      .message-content {
+        flex: 1;
+        min-width: 0;
+      }
+      
+      /* Object tree styling */
+      .console-transparent-bg div[data-type="object"] {
+        padding-top: 6px !important;
+      }
+      
+      /* Add space to object trees */
+      .console-transparent-bg ol[role="tree"] {
+        margin-top: 4px !important;
+      }
+      
+      /* Object tree items */
+      .console-transparent-bg li[role="treeitem"] > div {
+        padding-top: 2px !important;
+        padding-bottom: 2px !important;
+      }
+      
+      /* Add space between preview and expanded details (direct child only) */
+      .console-transparent-bg li[role="treeitem"] > ol[role="group"] {
+        margin-top: 8px !important;
+      }
+
+      /* Text color highlight styling */
+      .search-highlight {
+        color: ${variant === "dark" ? "var(--color-cyan-300)" : "var(--color-cyan-800)"};
+        text-shadow: 0 0 0.5px currentColor;
+        font-weight: ${variant === "dark" ? "400" : "600"};
+        background-color: transparent;
+        font-size: inherit !important;
+      }
+      
+      /* Clean up font size inconsistencies */
+      .console-feed-item {
+        font-size: 14px !important;
+      }
+      
+      /* Syntax highlighting container */
+      .syntax-highlight-container {
+        font-size: inherit !important;
+        font-family: var(--font-sans) !important;
+      }
+      
+      /* Make strings in console feed visible in dark mode */
+      .console-feed-item-string {
+        color: ${variant === "dark" ? "#d1d5db" : "inherit"} !important; 
+      }
+    `;
+      document.head.appendChild(styleEl);
+
+      return () => {
+        document.head.removeChild(styleEl);
+      };
+    }, [variant, fontSize]);
+
+    if (!logs || logs.length === 0) {
+      return (
+        <div ref={consoleRef} className="p-4 text-center font-sans text-zinc-500">
+          No logs to display
+        </div>
+      );
+    }
+
+    // Get type indicator class based on log method
+    const getTypeIndicatorClass = (method: string) => {
+      switch (method) {
+        case "error":
+          return "log-indicator-error";
+        case "warn":
+          return "log-indicator-warn";
+        case "info":
+          return "log-indicator-info";
+        default:
+          return "log-indicator-log";
+      }
+    };
+
+    // Get type border class based on log method
+    const getTypeBorderClass = (method: string) => {
+      switch (method) {
+        case "error":
+          return "type-border-error";
+        case "warn":
+          return "type-border-warn";
+        case "info":
+          return "type-border-info";
+        default:
+          return "type-border-log";
+      }
+    };
+
+    // Format timestamp with microseconds - directly generate if not already cached
+    const getTimestamp = (id: string) => {
+      // Use the existing timestamp if we've already generated one for this ID
+      if (!timestampsRef.current[id]) {
+        const now = new Date();
+        const hours = now.getHours().toString().padStart(2, "0");
+        const minutes = now.getMinutes().toString().padStart(2, "0");
+        const seconds = now.getSeconds().toString().padStart(2, "0");
+        const ms = now.getMilliseconds().toString().padStart(3, "0");
+
+        timestampsRef.current[id] = `${hours}:${minutes}:${seconds}.${ms}`;
+      }
+
+      return timestampsRef.current[id];
+    };
+
+    // Prepare search words (if any)
+    const searchWords = searchQuery ? [searchQuery] : [];
+
+    // Combine search query with always-highlighted words
+    const allHighlightWords = [...searchWords, ...highlightWords];
+
+    // Regex to find words in brackets like [word] or (word)
+    const bracketedWordsRegex = /[\[\(]([^\]\)]+)[\]\)]/g;
+
+    return (
+      <div
+        ref={consoleRef}
+        className={`h-full overflow-auto font-sans ${
+          variant === "dark"
+            ? "dark-mode bg-zinc-900 selection:bg-zinc-600/30 selection:text-zinc-50"
+            : "light-mode bg-zinc-200 selection:bg-zinc-400/30 selection:text-zinc-900"
+        }`}
+      >
+        <div>
+          {logs
+            .filter(log => log && (log.data || log.method))
+            .map((log, index) => {
+              // Ensure log is properly formatted and has valid data property
+              const validLog: ConsoleMessage = {
+                id: log.id || `log-${index}-${Date.now()}`,
+                method: (log.method || "log") as Methods,
+                data: Array.isArray(log.data)
+                  ? log.data.map((item: any) => (item === undefined ? "undefined" : item))
+                  : [log.data === undefined ? "undefined" : log.data],
+              };
+
+              // Use different row colors for dark and light mode
+              const rowBgClass =
+                variant === "dark"
+                  ? index % 2 === 0
+                    ? "bg-zinc-900"
+                    : "bg-zinc-800/50"
+                  : index % 2 === 0
+                    ? "bg-zinc-200"
+                    : "bg-zinc-300";
+
+              const typeIndicatorClass = getTypeIndicatorClass(validLog.method);
+              const typeBorderClass = getTypeBorderClass(validLog.method);
+
+              // Only extract string content for highlighting when we have highlight terms or bracket option is on
+              let textForHighlighting = "";
+              if (allHighlightWords.length > 0 || highlightBracketedWords) {
+                try {
+                  textForHighlighting = validLog.data
+                    .map(item => {
+                      if (typeof item === "string") {
+                        return item;
+                      } else if (item === null) {
+                        return "null";
+                      } else if (item === undefined) {
+                        return "undefined";
+                      } else if (typeof item === "number" || typeof item === "boolean") {
+                        return String(item);
+                      } else {
+                        // Just capture primitive and simple values for matching, don't convert whole objects
+                        return typeof item;
+                      }
+                    })
+                    .join(" ");
+                } catch (e) {
+                  textForHighlighting = String(validLog.data);
+                }
+              }
+
+              // Extract words in brackets if option is enabled
+              let wordsToHighlight = [...allHighlightWords];
+              let hasBracketMatch = false;
+
+              if (highlightBracketedWords) {
+                const bracketMatches = [...textForHighlighting.matchAll(bracketedWordsRegex)];
+                bracketMatches.forEach(match => {
+                  if (match[1]) {
+                    if (!wordsToHighlight.includes(match[1])) {
+                      wordsToHighlight.push(match[1]);
+                    }
+                    hasBracketMatch = true;
+                  }
+                });
+              }
+
+              // Check if we should highlight - now we consider both regular highlights AND bracket matches
+              const shouldHighlight =
+                wordsToHighlight.length > 0 &&
+                (wordsToHighlight.some(word =>
+                  textForHighlighting.toLowerCase().includes(word.toLowerCase())
+                ) ||
+                  hasBracketMatch);
+
+              return (
+                <div
+                  key={index}
+                  className={`${rowBgClass} flex border-t ${
+                    variant === "dark"
+                      ? "border-zinc-700/30 selection:bg-zinc-600/30 selection:text-zinc-50"
+                      : "border-zinc-400/30 selection:bg-zinc-400/30 selection:text-zinc-900"
+                  }`}
+                >
+                  <div className={`${typeIndicatorClass} h-full w-[1px] flex-shrink-0`}></div>
+                  <div className={`${typeBorderClass} flex-grow py-2 pl-0`}>
+                    <div className="message-container px-1">
+                      <div
+                        className={`ml-2 inline-block w-20 min-w-20 font-sans text-xs text-zinc-500 opacity-80 ${
+                          variant === "dark" ? "text-zinc-500" : "text-zinc-500"
+                        }`}
+                      >
+                        {getTimestamp(validLog.id || "")}
+                      </div>
+                      <div className="message-content text-balance">
+                        <div
+                          className={`console-transparent-bg w-full ${
+                            variant === "dark"
+                              ? "selection:bg-zinc-600/30 selection:text-zinc-50"
+                              : "selection:bg-zinc-400/30 selection:text-zinc-900"
+                          }`}
+                        >
+                          {shouldHighlight ? (
+                            <div
+                              className="syntax-highlight-container mb-2 px-2"
+                              style={{ fontSize: fontSize }}
+                            >
+                              {/* Show highlighted words in a simple pre-formatted way */}
+                              <pre
+                                className={`break-words whitespace-pre-wrap ${
+                                  variant === "dark"
+                                    ? "selection:bg-zinc-600/30 selection:text-zinc-50"
+                                    : "selection:bg-zinc-400/30 selection:text-zinc-900"
+                                }`}
+                                style={{ fontSize: "inherit" }}
+                              >
+                                <Highlighter
+                                  highlightClassName="search-highlight"
+                                  searchWords={wordsToHighlight}
+                                  autoEscape={true}
+                                  textToHighlight={(() => {
+                                    // Only show primitive values or summarized objects
+                                    return validLog.data
+                                      .map(item => {
+                                        if (typeof item === "string") {
+                                          return `${item}`;
+                                        } else if (item === null) {
+                                          return "null";
+                                        } else if (item === undefined) {
+                                          return "undefined";
+                                        } else if (typeof item === "object") {
+                                          try {
+                                            // Just provide a summary of objects with their keys
+                                            const keys = Object.keys(item).slice(0, 3);
+                                            return `{ ${keys.join(", ")}${keys.length < Object.keys(item).length ? ", ..." : ""} }`;
+                                          } catch (e) {
+                                            return String(item);
+                                          }
+                                        } else {
+                                          return String(item);
+                                        }
+                                      })
+                                      .join(" ");
+                                  })()}
+                                />
+                              </pre>
+                            </div>
+                          ) : (
+                            <ReactConsole
+                              logs={[validLog]}
+                              variant={variant}
+                              styles={{
+                                ...styles,
+                                LOG_BACKGROUND: "transparent",
+                                LOG_FONT_FAMILY: "var(--font-sans)",
+                                LOG_FONT_SIZE: fontSize,
+                              }}
+                            />
+                          )}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+        </div>
+      </div>
+    );
+  }
+);
+
+export function ScreenLogger(props: ScreenLoggerProps = {}) {
+  const {
+    fontSize = "13px",
+    position = "left",
+    width = "50%",
+    height = "40vh",
+    buttonPosition = "bottom-right",
+    opacity = 1, // Change from 0.98 to 1 for full opacity
+    shortcutKey = "k",
+    showButton = true,
+    initiallyVisible = true,
+    listenToKeystrokes = true,
+    variant: defaultVariant = "dark",
+    highlightWords = [],
+    highlightBracketedWords = false,
+    skipEarlyLogs = false, // Default is to show early logs
+    styles = {
+      LOG_COLOR: "var(--color-zinc-50)", // Light text color
+      LOG_BACKGROUND: "var(--color-zinc-900)", // Zinc-900 dark background
+      LOG_BORDER: "1px solid var(--color-zinc-700)", // Zinc-700 subtle border
+      LOG_FONT_SIZE: fontSize,
+      LOG_FONT_FAMILY: "var(--font-sans)",
+      LOG_ERROR_COLOR: "var(--color-red-500)", // Red for errors
+      LOG_WARN_COLOR: "var(--color-orange-500)", // Orange for warnings
+      LOG_INFO_COLOR: "var(--color-cyan-500)", // Cyan for info
+      LOG_DEBUG_COLOR: "var(--color-violet-500)", // Purple for debug
+      LOG_COMMAND_COLOR: "var(--color-emerald-500)", // Green for commands
+      OBJECT_VALUE_STRING_COLOR: "var(--color-yellow-300)", // Yellow for strings
+      OBJECT_VALUE_NUMBER_COLOR: "var(--color-indigo-300)", // Purple for numbers
+      OBJECT_VALUE_BOOLEAN_COLOR: "var(--color-orange-300)", // Orange for booleans
+      OBJECT_VALUE_FUNCTION_KEYWORD_COLOR: "var(--color-emerald-300)", // Green for function keywords
+      OBJECT_VALUE_NULL_COLOR: "var(--color-pink-300)", // Pink for null values
+    },
+  } = props;
+
+  // Toggle theme function
+  const [themeVariant, setThemeVariant] = useState<"light" | "dark">(defaultVariant);
+
+  // Light theme styles for when light mode is selected
+  const lightThemeStyles = {
+    LOG_COLOR: "var(--color-zinc-950)", // zinc-800 text color (darker than before)
+    LOG_BACKGROUND: "var(--color-zinc-100)", // zinc-100 light background
+    LOG_BORDER: "1px solid var(--color-zinc-300)", // zinc-300 subtle border
+    LOG_FONT_SIZE: fontSize, // Use the fontSize prop here too
+    LOG_ERROR_COLOR: "var(--color-red-600)", // Red-600 for errors
+    LOG_WARN_COLOR: "var(--color-orange-600)", // Orange-600 for warnings
+    LOG_INFO_COLOR: "var(--color-blue-600)", // Blue-600 for info
+    LOG_DEBUG_COLOR: "var(--color-violet-600)", // Violet-600 for debug
+    LOG_COMMAND_COLOR: "var(--color-emerald-600)", // Emerald-600 for commands
+    OBJECT_VALUE_STRING_COLOR: "var(--color-zinc-600)", // zinc-600 for strings
+    OBJECT_VALUE_NUMBER_COLOR: "var(--color-blue-600)", // Blue-600 for numbers
+    OBJECT_VALUE_BOOLEAN_COLOR: "var(--color-orange-600)", // Orange-600 for booleans
+    OBJECT_VALUE_FUNCTION_KEYWORD_COLOR: "var(--color-emerald-600)", // Emerald-600 for function keywords
+    OBJECT_VALUE_NULL_COLOR: "var(--color-violet-600)", // Violet-600 for null values
+  };
+
+  const toggleTheme = useCallback(() => {
+    setThemeVariant(current => (current === "light" ? "dark" : "light"));
+    console.log(`Theme switched to ${themeVariant === "light" ? "dark" : "light"} mode`);
+  }, [themeVariant]);
+
+  // Apply theme based on variant
+  const themeStyles = themeVariant === "dark" ? styles : { ...styles, ...lightThemeStyles };
+
+  const [isVisible, setIsVisible] = useState(initiallyVisible);
+  const [logs, setLogs] = useState<ConsoleLog[]>([]);
+  const [throttle, setThrottle] = useState({
+    throttled: false,
+    paused: false,
+    delay: 250,
+  });
+  const [loggerPosition, setLoggerPosition] = useState<LoggerPosition>(position);
+  const [loggerWidth, setLoggerWidth] = useState(width);
+  const [searchQuery, setSearchQuery] = useState("");
+  const lastLogTimeRef = useRef(0);
+  const loggerInitializedRef = useRef(false);
+  const [customHighlightWords, setCustomHighlightWords] = useState<string[]>(highlightWords);
+  const [isHighlightBrackets, setIsHighlightBrackets] = useState<boolean>(highlightBracketedWords);
+  const [newHighlightWord, setNewHighlightWord] = useState<string>("");
+
+  // Create a stable ref for timestamps
+  const timestampsRef = useRef<Record<string, string>>({});
+
+  // Scroll detection for fade effects
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const [hasScrollLeft, setHasScrollLeft] = useState(false);
+  const [hasScrollRight, setHasScrollRight] = useState(false);
+
+  // Check if scroll area has content to the left or right
+  const updateScrollIndicators = useCallback(() => {
+    if (scrollContainerRef.current) {
+      const { scrollLeft, scrollWidth, clientWidth } = scrollContainerRef.current;
+      setHasScrollLeft(scrollLeft > 0);
+      setHasScrollRight(scrollLeft < scrollWidth - clientWidth - 5); // 5px buffer
+    }
+  }, []);
+
+  // Update scroll indicators on mount and when content changes
+  useEffect(() => {
+    updateScrollIndicators();
+
+    const scrollContainer = scrollContainerRef.current;
+    if (scrollContainer) {
+      scrollContainer.addEventListener("scroll", updateScrollIndicators);
+
+      // Use ResizeObserver to detect content changes
+      const resizeObserver = new ResizeObserver(() => {
+        updateScrollIndicators();
+      });
+
+      resizeObserver.observe(scrollContainer);
+
+      // Initial check with a slight delay to ensure content is rendered
+      setTimeout(updateScrollIndicators, 100);
+
+      // Also listen for window resize events
+      window.addEventListener("resize", updateScrollIndicators);
+
+      return () => {
+        scrollContainer.removeEventListener("scroll", updateScrollIndicators);
+        window.removeEventListener("resize", updateScrollIndicators);
+        resizeObserver.disconnect();
+      };
+    }
+  }, [updateScrollIndicators, logs.length, searchQuery, isVisible, loggerWidth]); // Added loggerWidth to update on resize
+
+  // Create a ref to track if this is the first instance or a remount
+  const isFirstMountRef = useRef(true);
+
+  // Register the screen logger for early logs
+  useEffect(() => {
+    if (!window.screenLog) {
+      window.screenLog = {
+        log: (...args: any[]) => {
+          const entry = { method: "log", data: args };
+          enqueue(entry);
+        },
+        info: (...args: any[]) => {
+          const entry = { method: "info", data: args };
+          enqueue(entry);
+        },
+        warn: (...args: any[]) => {
+          const entry = { method: "warn", data: args };
+          enqueue(entry);
+        },
+        error: (...args: any[]) => {
+          const entry = { method: "error", data: args };
+          enqueue(entry);
+        },
+        clear: () => {
+          setLogs([]);
+        },
+        destroy: () => {
+          // Nothing to do
+        },
+      };
+    }
+  }, []);
+
+  // capture console.*
+  const enqueue = useCallback(
+    (entry: ConsoleLog) => {
+      const now = Date.now();
+      const { throttled, paused, delay } = throttle;
+      if (paused) return;
+
+      // Skip invalid entries
+      if (!entry || (!entry.data && !entry.method)) return;
+
+      // Validate the entry data before enqueueing
+      const validEntry: ConsoleLog = {
+        ...entry,
+        id: entry.id || `log-${Date.now()}-${Math.random().toString(36).substring(2, 9)}`,
+        method: entry.method || "log",
+        data: Array.isArray(entry.data)
+          ? entry.data.map((item: any) => (item === undefined ? "undefined" : item))
+          : [entry.data === undefined ? "undefined" : entry.data],
+      };
+
+      if (throttled) {
+        if (now - lastLogTimeRef.current >= delay) {
+          setLogs(p => [...p, validEntry]);
+          lastLogTimeRef.current = now;
+        }
+      } else {
+        setLogs(p => [...p, validEntry]);
+      }
+    },
+    [throttle]
+  );
+
+  useEffect(() => {
+    const hookedConsole = Hook(
+      window.console,
+      log => {
+        // Skip any logs that are from console.clear()
+        if (log && log.method === "clear") {
+          // Handle clear method specially
+          setLogs([]);
+          return;
+        }
+        enqueue(log as ConsoleLog);
+      },
+      false
+    );
+
+    // Mark as initialized so we know to replay early logs
+    loggerInitializedRef.current = true;
+
+    // Replay any early logs captured before mount, but only if:
+    // 1. Not skipping early logs (skipEarlyLogs prop is false)
+    // 2. This is the first mount (isFirstMountRef is true)
+    if (!skipEarlyLogs && isFirstMountRef.current) {
+      setTimeout(() => {
+        replayLogsToScreenLogger();
+      }, 0);
+    }
+
+    // Set isFirstMountRef to false after first mount
+    isFirstMountRef.current = false;
+
+    return () => {
+      if (hookedConsole && typeof Unhook === "function") {
+        try {
+          Unhook(hookedConsole);
+        } catch (e) {
+          console.error("Error unhooking console:", e);
+        }
+      }
+    };
+  }, [enqueue, skipEarlyLogs]);
+
+  const clearLogs = useCallback(() => {
+    setLogs([]);
+    // Don't call console.clear() as it might be generating the undefined log
+    // Instead just clear our local state
+  }, []);
+
+  const copyLogs = useCallback(() => {
+    const text = logs.map(l => l.data.join(" ")).join("\n");
+    navigator.clipboard.writeText(text);
+  }, [logs]);
+
+  const toggleThrottling = useCallback(() => {
+    setThrottle(s => {
+      let next = { ...s },
+        msg = "";
+      if (!s.throttled && !s.paused) {
+        next = { throttled: true, paused: false, delay: 250 };
+        msg = " ----------  THROTTLING ENABLED: 250ms ---------- ";
+      } else if (s.throttled && s.delay === 250) {
+        next = { throttled: true, paused: false, delay: 500 };
+        msg = " ----------  THROTTLING SET TO: 500ms ---------- ";
+      } else if (s.throttled && s.delay === 500) {
+        next = { throttled: true, paused: false, delay: 1000 };
+        msg = " ----------  THROTTLING SET TO: 1000ms ---------- ";
+      } else if (s.throttled && s.delay === 1000) {
+        next = { throttled: false, paused: true, delay: 1000 };
+        msg = " ----------  LOGGING PAUSED  ---------- ";
+      } else {
+        next = { throttled: false, paused: false, delay: 250 };
+        msg = " ----------  THROTTLING DISABLED  ---------- ";
+      }
+
+      // Log the message without actually changing the timestamps of existing logs
+      window.console.info(msg);
+
+      return next;
+    });
+  }, []);
+
+  const togglePause = useCallback(() => {
+    setThrottle(s => {
+      return { ...s, paused: !s.paused };
+    });
+  }, []);
+
+  const toggleVisibility = useCallback(() => {
+    setIsVisible(v => !v);
+  }, []);
+
+  const updatePosition = useCallback((pos: LoggerPosition) => {
+    setLoggerPosition(pos);
+  }, []);
+
+  // keyboard shortcuts
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (!listenToKeystrokes) return;
+    const onKey = (e: KeyboardEvent) => {
+      // Don't handle events when editing input fields
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        return;
+      }
+
+      const key = e.key.toLowerCase();
+      if ((e.ctrlKey || e.metaKey) && key === shortcutKey) {
+        e.preventDefault();
+        toggleVisibility();
+        return;
+      }
+
+      if (!isVisible) return;
+
+      // Handle other keyboard shortcuts
+      if ((e.ctrlKey || e.metaKey) && key === "f") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        return;
+      }
+
+      if ((e.ctrlKey || e.metaKey) && key === "t") {
+        e.preventDefault();
+        toggleThrottling();
+        return;
+      }
+
+      // Add theme toggle shortcut
+      if ((e.ctrlKey || e.metaKey) && e.shiftKey && key === "t") {
+        e.preventDefault();
+        toggleTheme();
+        return;
+      }
+
+      if (e.ctrlKey && key === "x") {
+        e.preventDefault();
+        clearLogs();
+        return;
+      }
+
+      if (e.ctrlKey && e.shiftKey && key === "c") {
+        e.preventDefault();
+        copyLogs();
+        return;
+      }
+
+      if (e.ctrlKey && key === "p") {
+        e.preventDefault();
+        togglePause();
+        return;
+      }
+
+      if (e.ctrlKey && (key === "+" || key === "=")) {
+        e.preventDefault();
+        setLoggerWidth(w => `${Math.min(100, parseInt(w) + 10)}%`);
+        return;
+      }
+
+      if (e.ctrlKey && key === "-") {
+        e.preventDefault();
+        setLoggerWidth(w => `${Math.max(20, parseInt(w) - 10)}%`);
+        return;
+      }
+
+      if (e.ctrlKey && !e.metaKey && !e.shiftKey) {
+        let handled = true;
+        switch (key) {
+          case "i":
+            updatePosition("top");
+            break;
+          case "u":
+            updatePosition("top-left");
+            break;
+          case "o":
+            updatePosition("top-right");
+            break;
+          case "j":
+            updatePosition("left");
+            break;
+          case "l":
+            updatePosition("right");
+            break;
+          case ".":
+            updatePosition("bottom-right");
+            break;
+          case "m":
+            updatePosition("bottom-left");
+            break;
+          case ",":
+            updatePosition("bottom");
+            break;
+          case "0":
+            updatePosition("center");
+            break;
+          case "h": // Use Ctrl+H for highlight settings
+            setIsHighlightSettingsVisible(prev => !prev);
+            break;
+          default:
+            handled = false;
+        }
+
+        if (handled) {
+          e.preventDefault();
+          return;
+        }
+      }
+
+      // Add new shortcut for word highlight settings
+      if (e.ctrlKey && e.shiftKey && key === "h") {
+        e.preventDefault();
+        // Toggle a settings panel for highlights (implemented in the UI below)
+        setIsHighlightSettingsVisible(prev => !prev);
+        return;
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [
+    isVisible,
+    listenToKeystrokes,
+    shortcutKey,
+    toggleVisibility,
+    toggleThrottling,
+    clearLogs,
+    copyLogs,
+    togglePause,
+    updatePosition,
+    toggleTheme,
+    customHighlightWords,
+    isHighlightBrackets,
+  ]);
+
+  // filter
+  const visibleLogs = logs.filter(l => {
+    try {
+      // First apply search filter if any
+      if (searchQuery) {
+        const joinedData = l.data?.join(" ").toLowerCase() || "";
+        if (!joinedData.includes(searchQuery.toLowerCase())) {
+          return false;
+        }
+      }
+
+      // If no filters are active, show all logs
+      return true;
+    } catch (e) {
+      return false;
+    }
+  });
+
+  // styles
+  const buttonStyles: CSSProperties = (() => {
+    const s: CSSProperties = { position: "fixed", zIndex: 9999 };
+    const gap = 8;
+    switch (buttonPosition) {
+      case "top-left":
+        return { ...s, top: gap, left: gap };
+      case "top-right":
+        return { ...s, top: gap, right: gap };
+      case "bottom-left":
+        return { ...s, bottom: gap, left: gap };
+      default:
+        return { ...s, bottom: gap, right: gap };
+    }
+  })();
+
+  const panelStyles: CSSProperties = (() => {
+    // Define margin size to inset the panel from edges
+    const margin = 12; // 12px margin on all sides
+
+    const base: CSSProperties = {
+      position: "fixed",
+      zIndex: 9999,
+      opacity,
+      fontSize,
+      display: "flex",
+      flexDirection: "column",
+      borderRadius: 6,
+      boxShadow: themeVariant === "dark" ? "0 0 15px rgba(0,0,0,0.7)" : "0 0 15px rgba(0,0,0,0.3)",
+      width: `calc(${loggerWidth} - ${margin * 2}px)`, // Adjust width to account for margins
+      overflow: "hidden",
+    };
+
+    const set = (k: string, v: string) => ((base as any)[k] = v);
+    switch (loggerPosition) {
+      case "top":
+        set("top", `${margin}px`);
+        set("left", `calc((100% - ${loggerWidth})/2 + ${margin}px)`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+      case "bottom":
+        set("bottom", `${margin}px`);
+        set("left", `calc((100% - ${loggerWidth})/2 + ${margin}px)`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+      case "left":
+        set("top", `${margin}px`);
+        set("left", `${margin}px`);
+        set("height", `calc(100vh - ${margin * 2}px)`);
+        break;
+      case "right":
+        set("top", `${margin}px`);
+        set("right", `${margin}px`);
+        set("height", `calc(100vh - ${margin * 2}px)`);
+        break;
+      case "center":
+        set("top", `calc(20% + ${margin}px)`);
+        set("left", `calc((100% - ${loggerWidth})/2 + ${margin}px)`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+      case "top-left":
+        set("top", `${margin}px`);
+        set("left", `${margin}px`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+      case "top-right":
+        set("top", `${margin}px`);
+        set("right", `${margin}px`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+      case "bottom-left":
+        set("bottom", `${margin}px`);
+        set("left", `${margin}px`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+      case "bottom-right":
+        set("bottom", `${margin}px`);
+        set("right", `${margin}px`);
+        set("height", `calc(${loggerHeight} - ${margin * 2}px)`);
+        break;
+    }
+    return base;
+  })();
+
+  const headerStyles: CSSProperties = {
+    padding: "8px 12px",
+    fontWeight: "bold",
+    borderBottom: themeVariant === "dark" ? "1px solid #3f3f46" : "1px solid #cbd5e1",
+    color: themeVariant === "dark" ? "#f4f4f5" : "#1e293b",
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    fontFamily: "var(--font-sans)",
+    fontSize: "14px",
+    letterSpacing: "0.5px",
+  };
+
+  const contentStyles: CSSProperties = {
+    flex: 1,
+    overflowY: "auto",
+    padding: "0", // Remove padding to maximize console space
+  };
+
+  // Highlight settings panel visibility
+  const [isHighlightSettingsVisible, setIsHighlightSettingsVisible] = useState(false);
+  // Reference to the highlight word input
+  const highlightInputRef = useRef<HTMLInputElement>(null);
+
+  // Focus the highlight input when the panel becomes visible
+  useEffect(() => {
+    if (isHighlightSettingsVisible && highlightInputRef.current) {
+      setTimeout(() => {
+        highlightInputRef.current?.focus();
+      }, 100);
+    }
+  }, [isHighlightSettingsVisible]);
+
+  // Additional styles for the highlight settings panel
+  const highlightSettingsPanelStyle: CSSProperties = {
+    position: "fixed",
+    top: "12vh",
+    left: "50%",
+    transform: "translateX(-50%)",
+    zIndex: 9999999, // Much higher than any other elements
+    maxWidth: "90vw",
+    width: "500px",
+  };
+
+  // Function to add a new word to highlight
+  const addHighlightWord = useCallback(() => {
+    if (newHighlightWord && !customHighlightWords.includes(newHighlightWord)) {
+      setCustomHighlightWords(prev => [...prev, newHighlightWord]);
+      setNewHighlightWord("");
+    }
+  }, [newHighlightWord, customHighlightWords]);
+
+  // Function to handle key press in the highlight input
+  const handleHighlightInputKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLInputElement>) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        addHighlightWord();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        setIsHighlightSettingsVisible(false);
+      } else if (e.key === "Tab") {
+        // Natural tab behavior for focus traversal
+      }
+    },
+    [addHighlightWord]
+  );
+
+  // Add escape key listener to close the panel when it's open
+  useEffect(() => {
+    const handleEscapeKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && isHighlightSettingsVisible) {
+        e.preventDefault();
+        e.stopPropagation(); // Stop propagation to prevent screen flash
+        setIsHighlightSettingsVisible(false);
+      }
+    };
+
+    document.addEventListener("keydown", handleEscapeKey);
+    return () => {
+      document.removeEventListener("keydown", handleEscapeKey);
+    };
+  }, [isHighlightSettingsVisible]);
+
+  // Function to remove a word from highlighting
+  const removeHighlightWord = useCallback((word: string) => {
+    setCustomHighlightWords(prev => prev.filter(w => w !== word));
+  }, []);
+
+  // Toggle bracketed words highlighting
+  const toggleBracketedHighlight = useCallback(() => {
+    setIsHighlightBrackets(prev => !prev);
+  }, [isHighlightBrackets]);
+
+  // Use memo for highlight input to prevent re-rendering the entire component when typing
+  const highlightInputMemo = useMemo(() => {
+    return (
+      <input
+        type="text"
+        value={newHighlightWord}
+        onChange={e => setNewHighlightWord(e.target.value)}
+        onKeyDown={handleHighlightInputKeyDown}
+        className={`min-w-0 flex-1 rounded px-3 py-1.5 text-sm focus:ring-0 focus:outline-none ${
+          themeVariant === "dark" ? "border-zinc-700 bg-zinc-800" : "border-zinc-300 bg-zinc-100"
+        } `}
+        placeholder="Enter word to highlight..."
+        ref={highlightInputRef}
+        tabIndex={1}
+      />
+    );
+  }, [newHighlightWord, themeVariant, handleHighlightInputKeyDown]);
+
+  // Add style for hidden scrollbars
+  useEffect(() => {
+    const styleEl = document.createElement("style");
+    styleEl.innerHTML = `
+      .hide-scrollbar::-webkit-scrollbar {
+        display: none;
+      }
+    `;
+    document.head.appendChild(styleEl);
+
+    return () => {
+      document.head.removeChild(styleEl);
+    };
+  }, []);
+
+  return (
+    <>
+      {showButton && (
+        <div
+          style={buttonStyles}
+          className={`flex gap-2 rounded border shadow-sm ${themeVariant === "dark" ? "border-zinc-700 bg-zinc-900" : "border-zinc-300 bg-zinc-200"}`}
+        >
+          <button
+            onClick={toggleVisibility}
+            className={`h-5 rounded border px-2 font-sans text-xs font-light shadow-sm transition-colors ${
+              themeVariant === "dark"
+                ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+            }`}
+          >
+            {isVisible ? "Hide" : "Show"} Logs
+          </button>
+        </div>
+      )}
+
+      {isVisible &&
+        isHighlightSettingsVisible &&
+        createPortal(
+          <div
+            style={highlightSettingsPanelStyle}
+            className={`rounded-md border font-sans shadow-xl ${
+              themeVariant === "dark"
+                ? "border-zinc-700/50 bg-zinc-950 text-zinc-50"
+                : "border-zinc-400/50 bg-zinc-200 text-zinc-950"
+            } `}
+          >
+            {/* Header */}
+            <div
+              className={`flex items-center justify-between border-b px-4 py-3 ${themeVariant === "dark" ? "border-zinc-900" : "border-zinc-400/50"} `}
+            >
+              <h3 className="font-medium">Highlight Settings</h3>
+              <button
+                onClick={() => setIsHighlightSettingsVisible(false)}
+                className="rounded-full p-1 hover:bg-zinc-800/30"
+                tabIndex={3}
+                onKeyDown={e => {
+                  if (e.key === "Enter" || e.key === "Escape") {
+                    setIsHighlightSettingsVisible(false);
+                  }
+                }}
+              >
+                <span className="sr-only">Close</span>
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+              </button>
+            </div>
+
+            {/* Content */}
+            <div className="space-y-4 p-4">
+              {/* Add word input */}
+              <div>
+                <label className="mb-1.5 block text-sm opacity-80">Add word to highlight:</label>
+                <div className="flex gap-2">
+                  {highlightInputMemo}
+                  <button
+                    onClick={addHighlightWord}
+                    className={`rounded px-3 py-1.5 text-sm font-medium ${
+                      themeVariant === "dark"
+                        ? "bg-zinc-600 text-white hover:bg-zinc-700"
+                        : "bg-zinc-500 text-white hover:bg-zinc-600"
+                    } `}
+                    tabIndex={2}
+                    onKeyDown={e => {
+                      if (e.key === "Enter") {
+                        addHighlightWord();
+                      } else if (e.key === "Escape") {
+                        setIsHighlightSettingsVisible(false);
+                      }
+                    }}
+                  >
+                    Add
+                  </button>
+                </div>
+              </div>
+
+              {/* Highlighted words */}
+              <div>
+                <label className="mb-2 block text-sm opacity-80">Highlighted words:</label>
+                <div className="flex flex-wrap gap-1.5">
+                  {customHighlightWords.length === 0 ? (
+                    <span className="py-1 text-sm italic opacity-60">No words added yet</span>
+                  ) : (
+                    customHighlightWords.map(word => (
+                      <div
+                        key={word}
+                        className={`inline-flex items-center rounded-full py-1 pr-2 pl-3 text-sm text-white ${themeVariant === "dark" ? "bg-cyan-600" : "bg-cyan-700"} `}
+                      >
+                        {word}
+                        <button
+                          className="ml-1.5 rounded-full p-0.5 hover:bg-zinc-800/50"
+                          onClick={() => removeHighlightWord(word)}
+                          aria-label={`Remove ${word}`}
+                        >
+                          <svg
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2.5"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                          </svg>
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
+
+              {/* Bracketed words option */}
+              <div className="flex items-center pt-1">
+                <input
+                  type="checkbox"
+                  id="bracket-highlight"
+                  checked={isHighlightBrackets}
+                  onChange={toggleBracketedHighlight}
+                  className={`mr-3 h-4 w-4 rounded ${
+                    themeVariant === "dark"
+                      ? "border-zinc-600 !bg-zinc-800 text-indigo-500"
+                      : "border-zinc-300 !bg-zinc-100 text-indigo-500"
+                  } `}
+                />
+                <label htmlFor="bracket-highlight" className="text-sm select-none">
+                  Highlight words in brackets [like this] or (like this)
+                </label>
+              </div>
+
+              {/* Examples */}
+              <div
+                className={`mt-3 rounded-md p-3 text-xs ${
+                  themeVariant === "dark"
+                    ? "bg-zinc-800/50 text-zinc-300"
+                    : "bg-zinc-300/50 text-zinc-700"
+                } `}
+              >
+                <p>
+                  <strong>Tip:</strong> Add words like "error", "warning", or parameter names to
+                  track them in logs. This highlighting works alongside regular search.
+                </p>
+              </div>
+            </div>
+          </div>,
+          document.body // Render directly to body to avoid stacking context issues
+        )}
+
+      {isVisible &&
+        createPortal(
+          <div
+            style={panelStyles}
+            className={`${themeVariant === "dark" ? "bg-zinc-950" : "bg-zinc-200"}`}
+          >
+            <div
+              style={{
+                ...headerStyles,
+                flexDirection: "column",
+                padding: "4px",
+              }}
+              className={`${themeVariant === "dark" ? "bg-zinc-900" : "bg-zinc-200"}`}
+            >
+              {/* Title area */}
+              <div className="flex w-full items-center pt-1 pb-2">
+                <div className="group mr-3 ml-2 flex items-center space-x-1.5">
+                  <button
+                    onClick={toggleVisibility}
+                    className="relative h-3 w-3 rounded-full border border-red-700/20 bg-red-500/90 transition-colors hover:bg-red-500 focus:outline-none"
+                    title="Close console"
+                  >
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] text-red-900 opacity-0 group-hover:opacity-100">
+                      ×
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setLoggerWidth(w => `${Math.max(20, parseInt(w) - 10)}%`)}
+                    className="relative h-3 w-3 rounded-full border border-amber-700/20 bg-amber-500/90 transition-colors hover:bg-amber-500 focus:outline-none"
+                    title="Decrease width"
+                  >
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] text-amber-900 opacity-0 group-hover:opacity-100">
+                      −
+                    </span>
+                  </button>
+                  <button
+                    onClick={() => setLoggerWidth(w => `${Math.min(100, parseInt(w) + 10)}%`)}
+                    className="relative h-3 w-3 rounded-full border border-emerald-700/20 bg-emerald-500/90 transition-colors hover:bg-emerald-500 focus:outline-none"
+                    title="Increase width"
+                  >
+                    <span className="absolute inset-0 flex items-center justify-center text-[8px] text-emerald-900 opacity-0 group-hover:opacity-100">
+                      +
+                    </span>
+                  </button>
+                </div>
+                <span className="flex-1 cursor-default text-center select-none">
+                  <span className="font-sans text-xs font-medium">
+                    Console ({visibleLogs.length})
+                  </span>
+                </span>
+                <div className="w-[67px]"></div> {/* Spacer to balance the header */}
+              </div>
+
+              {/* Scrollable controls area with hidden scrollbar */}
+              <div className="relative -ml-4 w-full">
+                {/* Left fade gradient */}
+                {hasScrollLeft && (
+                  <div
+                    className={`pointer-events-none absolute top-0 left-0 z-10 h-8 w-8 ${
+                      themeVariant === "dark"
+                        ? "bg-gradient-to-r from-zinc-900 to-transparent"
+                        : "bg-gradient-to-r from-zinc-200 to-transparent"
+                    }`}
+                  />
+                )}
+
+                {/* Right fade gradient */}
+                {hasScrollRight && (
+                  <div
+                    className={`pointer-events-none absolute top-0 right-0 z-10 h-8 w-8 ${
+                      themeVariant === "dark"
+                        ? "bg-gradient-to-l from-zinc-900 to-transparent"
+                        : "bg-gradient-to-l from-zinc-200 to-transparent"
+                    }`}
+                  />
+                )}
+
+                <div
+                  className="hide-scrollbar w-full overflow-x-auto pb-2"
+                  style={{
+                    msOverflowStyle: "none" /* IE and Edge */,
+                    scrollbarWidth: "none" /* Firefox */,
+                  }}
+                  ref={scrollContainerRef}
+                >
+                  <div className="ml-2 flex min-w-max items-center gap-1 pr-2 pl-2">
+                    <input
+                      ref={searchRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={e => setSearchQuery(e.target.value)}
+                      placeholder="Search"
+                      className={`h-5 min-w-20 rounded border px-2 text-xs font-thin transition-colors outline-none placeholder:font-thin focus:ring-1 ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/20 bg-zinc-800/40 text-zinc-100 focus:border-cyan-500/40 focus:ring-white"
+                          : "border-zinc-400/20 bg-zinc-400/30 text-zinc-900 focus:border-cyan-600/40 focus:ring-zinc-800"
+                      }`}
+                    />
+                    <span className="mx-1 text-zinc-500/40">|</span>
+                    <button
+                      onClick={() => setIsHighlightSettingsVisible(prev => !prev)}
+                      className={`inline-flex h-5 items-center rounded border px-1.5 text-xs font-light transition-colors ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                          : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title="Highlight words (Ctrl+H)"
+                    >
+                      {(customHighlightWords.length > 0 || isHighlightBrackets) && (
+                        <span
+                          className={`mr-1 inline-block h-1.5 w-1.5 rounded-full align-middle ${
+                            themeVariant === "dark" ? "bg-cyan-500" : "bg-cyan-600"
+                          }`}
+                        ></span>
+                      )}
+                      Highlight
+                    </button>
+                    <span className="mx-1 text-zinc-500/40">|</span>
+                    <button
+                      onClick={clearLogs}
+                      className={`h-5 rounded border px-1.5 text-xs font-light transition-colors ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                          : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title="Clear console"
+                    >
+                      Clear
+                    </button>
+                    <button
+                      onClick={copyLogs}
+                      className={`h-5 rounded border px-1.5 text-xs font-light transition-colors ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                          : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title="Copy logs"
+                    >
+                      Copy
+                    </button>
+                    <span className="mx-1 text-zinc-500/40">|</span>
+                    <button
+                      onClick={toggleThrottling}
+                      className={`h-5 rounded border px-1.5 text-xs font-light transition-colors ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                          : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title={
+                        throttle.paused
+                          ? "Paused"
+                          : throttle.throttled
+                            ? `Throttle: ${throttle.delay}ms`
+                            : "Throttle: Off"
+                      }
+                    >
+                      {throttle.paused
+                        ? "Paused"
+                        : throttle.throttled
+                          ? `T-${throttle.delay}`
+                          : "Fast"}
+                    </button>
+                    <button
+                      onClick={togglePause}
+                      className={`h-5 rounded border px-1.5 text-xs font-light transition-colors ${
+                        throttle.paused
+                          ? themeVariant === "dark"
+                            ? "border-orange-600/50 bg-orange-700/60 text-orange-100 hover:bg-orange-600"
+                            : "border-orange-500/50 bg-orange-500/70 text-orange-50 hover:bg-orange-600"
+                          : themeVariant === "dark"
+                            ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                            : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title={throttle.paused ? "Resume" : "Pause"}
+                    >
+                      {throttle.paused ? "Resume" : "Pause"}
+                    </button>
+                    <span className="mx-1 text-zinc-500/40">|</span>
+                    <button
+                      onClick={toggleTheme}
+                      className={`h-5 rounded border px-1.5 text-xs font-light transition-colors ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                          : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title="Toggle theme"
+                    >
+                      {themeVariant === "light" ? "Dark" : "Light"}
+                    </button>
+                    <button
+                      onClick={toggleVisibility}
+                      className={`h-5 rounded border px-1.5 text-xs font-light transition-colors ${
+                        themeVariant === "dark"
+                          ? "border-zinc-700/25 bg-zinc-800/50 text-zinc-100 hover:bg-zinc-700"
+                          : "border-zinc-300/25 bg-zinc-300/50 text-zinc-800 hover:bg-zinc-400"
+                      }`}
+                      title="Close console"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div style={contentStyles}>
+              <StyledConsole
+                logs={visibleLogs}
+                variant={themeVariant}
+                styles={themeStyles}
+                searchQuery={searchQuery}
+                highlightWords={customHighlightWords}
+                highlightBracketedWords={isHighlightBrackets}
+                fontSize={fontSize}
+                timestampsRef={timestampsRef}
+              />
+            </div>
+          </div>,
+          document.body
+        )}
+    </>
+  );
+}
+
+declare global {
+  interface Window {
+    screenLog?: {
+      log: (...args: any[]) => void;
+      clear: () => void;
+      info: (...args: any[]) => void;
+      warn: (...args: any[]) => void;
+      error: (...args: any[]) => void;
+      destroy: () => void;
+    };
+  }
+}
